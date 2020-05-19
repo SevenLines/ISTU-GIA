@@ -1,5 +1,6 @@
 import random
 import re
+from pprint import pprint
 
 import yaml
 import os
@@ -7,9 +8,14 @@ from datetime import datetime
 
 from docx import Document
 from docx.enum.text import WD_COLOR_INDEX
-from docx.shared import Pt
-from openpyxl import Workbook
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Pt, Mm
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
+from docx.enum.table import WD_ALIGN_VERTICAL
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
 
 AUDS = {
     'В-301': 0,
@@ -257,17 +263,91 @@ def generate_auds_schedule_document(data):
     wb.save("auds.xlsx")
 
 
+def generate_auds_docx():
+    def set_repeat_table_header(row):
+        """ set repeat table row on every new page
+        """
+        tr = row._tr
+        trPr = tr.get_or_add_trPr()
+        tblHeader = OxmlElement('w:tblHeader')
+        tblHeader.set(qn('w:val'), "true")
+        trPr.append(tblHeader)
+        return row
+
+    wb = load_workbook("auds без гос.экзамена.xlsx")
+    ws = wb.active
+
+    rows = list(ws.rows)
+    first_row = rows[0]
+
+    data = {}
+
+    for cell in first_row[1:]:
+        data[cell.value] = []
+
+    for row in rows[1:]:
+        for index, cell in enumerate(row):
+            aud_name = first_row[index].value
+            if index == 0:
+                date = cell.value
+            elif cell.value:
+                data[aud_name].append({
+                    'date': date,
+                    'value': cell.value.strip().replace("\n\n\n", "#")
+                        .replace("\n", " ")
+                        .replace(r"/ ", " / ").replace("#", "\n"),
+                })
+
+    pprint(data)
+
+    doc = Document("template2.docx")
+    for aud_name, rows in data.items():
+        if not rows:
+            continue
+
+        table = doc.add_table(0, 2, "Table Grid")
+        table.columns[0].width = Mm(25)
+        table.columns[1].width = Mm(150)
+
+        row1 = table.add_row()
+        row1.cells[0].merge(row1.cells[1])
+
+        p = row1.cells[0].paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = p.add_run()
+        r.text = aud_name
+        r.font.bold = True
+        r.font.size = Pt(16)
+
+        set_repeat_table_header(row1)
+
+        # row1 = table.rows[0]
+        for r in rows:
+            row = table.add_row()
+            cells = list(row.cells)
+            cells[0].text = r['date']
+            cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            cells[0].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            # cells[0].width = Mm(22)
+            cells[1].text = r['value']
+            # cells[1].width = Mm(130)
+        doc.add_page_break()
+
+    doc.save("расписание_гос.экзаменов_по_аудиториям.docx")
+
+
 def main():
+    generate_auds_docx()
     # fill_data_file()
     # data = calculate_schedule()
     # with open("processed.yaml", "w", encoding='utf8') as f:
     #     yaml.dump(data, f, allow_unicode=True)
 
-    with open("processed.yaml", encoding='utf8') as f:
-        data = yaml.load(f)
+    # with open("processed.yaml", encoding='utf8') as f:
+    #     data = yaml.load(f)
 
     # create_docx_documents(data)
-    generate_auds_schedule_document(data)
+    # generate_auds_schedule_document(data)
 
 
 if __name__ == '__main__':
