@@ -289,7 +289,10 @@ def generate_auds_docx():
         for index, cell in enumerate(row):
             aud_name = first_row[index].value
             if index == 0:
-                date = cell.value
+                if isinstance(cell.value, datetime):
+                    date = "{:%d.%m.%Y}".format(cell.value)
+                else:
+                    date = cell.value
             elif cell.value:
                 data[aud_name].append({
                     'date': date,
