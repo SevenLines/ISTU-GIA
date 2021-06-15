@@ -16,66 +16,69 @@ from openpyxl.styles import PatternFill
 from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-
 AUDS = {
-    'В-301': 0,
-    'В-302': 0,
-    'В-304': 0,
-    'В-201': 0,
-    'В-202': 0,
-    'В-214': 0,
-    'К-207': 0,
-    'Г-102': 0,
-    'Г-105': 0,
-    'Г-110': 0,
-    'Г-110б': 0,
-    'Г-206': 0,
-    'Г-212': 0,
-    'Г-219': 0,
-    'Г-314': 0,
-    'И-305': 0,
-    'И-307': 0,
-    'И-307a': 0,
-    'И-309': 0,
-    'И-311': 0,
-    'И-315': 0,
-    'И-317': 0,
-    'И-319': 0,
-    'K301': 0,
-    'K302': 0,
-    'K303': 0,
-    'K305': 0,
-    'K313': 0,
-    'K315а': 0,
-    'В-02': 1,
-    'Ж-216': 1,
-    'И-202': 1,
-    'K311': 2,
-    'K315': 2,
-    'K317': 2,
-    'Ж-319': 2,
-    'Ж-321': 2,
-    'Ж-323': 2,
-    'Ж-амф.': 3,
-    'Г-амф.': 3,
+    "В-02": 0,
+    "В-201": 0,
+    "В-202": 0,
+    "В-214": 0,
+    "В-301": 0,
+    "В-302": 0,
+    "В-304": 0,
+    "Г-102": 0,
+    "Г-105": 0,
+    "Г-110б": 0,
+    "Г-206": 0,
+    "Г-212": 0,
+    "Г-219": 0,
+    "Г-314": 0,
+    "И-202": 0,
+    "И-305": 0,
+    "И-307": 0,
+    "И-307a": 0,
+    "И-309": 0,
+    "К-207": 0,
+    "Конференц-зал": 0,
+
+    'K-301': 1,
+    "K-302": 1,
+    "K-303": 1,
+    "K-305": 1,
+    "K-311": 1,
+    "K-313": 1,
+    "K-315": 1,
+    "K-315а": 1,
+    "K-317": 1,
+    "И-311": 1,
+    "И-315": 1,
+    "И-317": 1,
+    "И-319": 1,
+    "Г-амф.": 1,
+    "Ж-216": 1,
+    "Ж-319": 1,
+    "Ж-321": 1,
+    "Ж-323": 1,
+    "Ж-амфитеатр": 1,
 }
 
 
-def process_file(document: Document):
+def process_file(document: Document, file_name):
     data = []
     table = document.tables[0]
     for row in table.rows[1:]:
         cells = list(row.cells)
-        if cells[2].text:
+        if cells[2].text.strip():
             dt = datetime.strptime(cells[2].text.strip() + " " + cells[3].text.strip(), "%d.%m.%Y %H.%M")
 
             data.append({
+                'file_name': file_name,
                 'title': cells[0].text,
                 'type': cells[1].text,
                 'date': dt,
+                'aud': cells[4].text,
             })
         else:
-            print(f"Остутсвует дата для {cells[0].text} в файле {document}")
+            if cells[0].text and cells[2].text.strip():
+                print(f"Остутсвует дата для {cells[0].text} в файле {document}")
     return data
 
 
@@ -85,10 +88,11 @@ def fill_data_file():
     :return:
     """
     data = {}
-    for file in os.listdir("./data"):
+    for file in os.listdir("./data/2021"):
         if file.endswith(".docx"):
             title = file.replace('.docx', '')
-            data[title] = process_file(Document(os.path.join("./data", file)))
+            pth = os.path.join("./data/2021", file)
+            data[title] = process_file(Document(pth), title)
 
     with open("data.yaml", "w", encoding="utf8") as f:
         yaml.dump(data, f, allow_unicode=True)
@@ -136,15 +140,31 @@ def calculate_schedule():
     for key, items in data.items():
         all_items_to_schedule.extend(items)
     random.shuffle(all_items_to_schedule)
+    all_items_to_schedule = sorted(all_items_to_schedule, key=lambda x: not(x['file_name'].startswith('Архитектуры, строительства')))
+
+    # конференц-зал оставляем
+    for item in all_items_to_schedule:
+        if item['aud'] != 'Конференц-зал':
+            item['aud'] = None
+        else:
+            dates = auds_schedule[item['aud']]
+            date_items = dates.setdefault(item['date'].date(), [])
+            date_items.append(item)
 
     # проектируем
     for item in all_items_to_schedule:
         found_aud = False
 
+        if item['aud']:
+            continue
+
         # расставляем занятия по приоритетами
         for priority in range(max(AUDS.values()) + 1):
             # формируем список аудиторий с указаным приоритетам
             aud_ids = [k for k in all_aud_ids if AUDS[k] == priority]
+            if item['file_name'].startswith('Архитектуры, строительства'):
+                aud_ids = sorted(aud_ids, key=lambda k: not k.startswith("Г"))
+
             # ищем свбодные аудитории
             for aud in aud_ids:
                 dates = auds_schedule[aud]
@@ -256,7 +276,8 @@ def generate_auds_schedule_document(data):
             ws.cell(1, aud_index + 2, f"{aud}")
             items = result.get(date, {}).get(aud, [])
             if items:
-                title = "\n\n".join(f"{'{:%H.%M}'.format(i['date'])}: {i['title']}" for i in sorted(items, key=lambda x: x['date']))
+                title = "\n\n".join(
+                    f"{'{:%H.%M}'.format(i['date'])}: {i['title']}" for i in sorted(items, key=lambda x: x['date']))
                 cell = ws.cell(date_index + 2, aud_index + 2, f"{title}")
                 cell.fill = PatternFill(fill_type='solid', start_color="FFDDDDDD", end_color="FFDDDDDD")
 
@@ -274,7 +295,7 @@ def generate_auds_docx():
         trPr.append(tblHeader)
         return row
 
-    wb = load_workbook("auds без гос.экзамена.xlsx")
+    wb = load_workbook("auds_15.06.2021.xlsx")
     ws = wb.active
 
     rows = list(ws.rows)
@@ -340,16 +361,16 @@ def generate_auds_docx():
 
 
 def main():
-    generate_auds_docx()
+    # generate_auds_docx()
     # fill_data_file()
     # data = calculate_schedule()
     # with open("processed.yaml", "w", encoding='utf8') as f:
     #     yaml.dump(data, f, allow_unicode=True)
 
-    # with open("processed.yaml", encoding='utf8') as f:
-    #     data = yaml.load(f)
+    with open("processed.yaml", encoding='utf8') as f:
+        data = yaml.load(f)
 
-    # create_docx_documents(data)
+    create_docx_documents(data)
     # generate_auds_schedule_document(data)
 
 
