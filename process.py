@@ -1,3 +1,4 @@
+import json
 import random
 import re
 from pprint import pprint
@@ -251,7 +252,7 @@ def create_docx_documents(data):
         doc.save(os.path.join("output", f"{key}.docx"))
 
 
-def generate_auds_schedule_document(data):
+def generate_auds_schedule_document(data, use_real_auds=False):
     """
     Формирование сетки аудиторий в формате дата/аудитория
     :param data:
@@ -268,7 +269,13 @@ def generate_auds_schedule_document(data):
     wb = Workbook()
     ws = wb.active
 
-    auds = sorted(AUDS.keys(), key=lambda x: x.replace("K", "К").replace("B", "В"))
+    auds = []
+    if use_real_auds:
+        for dt, value in result.items():
+            auds.extend(value.keys())
+        auds = sorted(list(set(auds)))
+    else:
+        auds = sorted(AUDS.keys(), key=lambda x: x.replace("K", "К").replace("B", "В"))
 
     for date_index, date in enumerate(sorted(result.keys())):
         ws.cell(date_index + 2, 1, "{:%d.%m.%Y}".format(date))
@@ -359,6 +366,55 @@ def generate_auds_docx():
 
     doc.save("расписание_гос.экзаменов_по_аудиториям.docx")
 
+def generate_script(data, use_real_auds=False, skip_not_exists_auds=False):
+    """
+     Формирование сетки аудиторий в формате дата/аудитория
+     :param data:
+     :return:
+     """
+    result = {}
+
+    for key, items in data.items():
+        for item in items:
+            date_item = result.setdefault(item['date'].date(), {})
+            all_items = date_item.setdefault(item['aud'], [])
+            all_items.append(item)
+
+    auds = []
+    if use_real_auds:
+        for dt, value in result.items():
+            auds.extend(value.keys())
+        auds = sorted(list(set(auds)))
+    else:
+        auds = sorted(AUDS.keys(), key=lambda x: x.replace("K", "К").replace("B", "В"))
+
+    with open("auds_ids.json", encoding="utf8") as f:
+        aud_info = json.load(f)
+        aud_info = {i['obozn']: i for i in aud_info}
+
+    not_found_auds = []
+    for aud in auds:
+        if aud not in aud_info:
+            not_found_auds.append(aud)
+
+    if not skip_not_exists_auds and not_found_auds:
+        raise Exception(not_found_auds)
+
+    sql_items = []
+    for date_index, date in enumerate(sorted(result.keys())):
+        for aud_index, aud in enumerate(auds):
+            items = result.get(date, {}).get(aud, [])
+            if items:
+                i = items[0]
+                if i['aud'] in aud_info:
+                    title = i['title'].replace('\n', '\\n')
+                    sql_items.append(f"(ARRAY[{aud_info[i['aud']]['id']}], 'ГЭК - {title}', '{i['date']:%Y-%m-%d}', '{{1,2,3,4,5,6}}', 100, '')")
+
+    s = "INSERT INTO queries(auds, description, dt, pairs, type, in_charge) VALUES "
+    s += ",\n".join(sql_items)
+    with open("query.sql", 'w', encoding="utf8") as f:
+        f.write(s)
+
 
 def main():
     # generate_auds_docx()
@@ -367,11 +423,12 @@ def main():
     # with open("processed.yaml", "w", encoding='utf8') as f:
     #     yaml.dump(data, f, allow_unicode=True)
 
-    with open("processed.yaml", encoding='utf8') as f:
+    with open("data.yaml", encoding='utf8') as f:
         data = yaml.load(f)
 
-    create_docx_documents(data)
-    # generate_auds_schedule_document(data)
+    # create_docx_documents(data)
+    # generate_auds_schedule_document(data, use_real_auds=True)
+    generate_script(data, use_real_auds=True, skip_not_exists_auds=True)
 
 
 if __name__ == '__main__':
